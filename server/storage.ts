@@ -647,36 +647,68 @@ export class DatabaseStorage implements IStorage {
   async createPost(insertPost: InsertPost): Promise<Post> {
     try {
       console.log("Creating post with data:", JSON.stringify(insertPost));
-      const now = new Date();
       
-      // Convert any nullish values to null for database compatibility
-      const sanitizedData = Object.fromEntries(
-        Object.entries(insertPost).map(([key, value]) => [key, value === undefined ? null : value])
-      );
+      // Extract values we know are needed and ensure they're in the right format
+      const {
+        title,
+        slug,
+        content,
+        categoryId,
+        userId
+      } = insertPost;
       
+      // Create the base insert object with required fields
+      const insertData: Record<string, any> = {
+        title,
+        slug,
+        content,
+        categoryId,
+        userId,
+      };
+      
+      // Add optional fields if they exist
+      if (insertPost.excerpt !== undefined) {
+        insertData.excerpt = insertPost.excerpt;
+      }
+      
+      if (insertPost.image !== undefined) {
+        insertData.image = insertPost.image;
+      }
+      
+      if (insertPost.published !== undefined) {
+        insertData.published = insertPost.published;
+      }
+      
+      if (insertPost.readTime !== undefined) {
+        insertData.readTime = insertPost.readTime;
+      }
+      
+      console.log("Inserting post with data:", JSON.stringify(insertData));
+      
+      // Insert the post
       const [post] = await db
         .insert(posts)
-        .values({
-          ...sanitizedData,
-          createdAt: now,
-          updatedAt: now
-        })
+        .values(insertData)
         .returning();
       
       if (!post) {
         throw new Error("Failed to create post, no post returned");
       }
       
+      console.log("Post created:", JSON.stringify(post));
+      
       // Update category count
-      await db
-        .update(categories)
-        .set({ 
-          count: db.select({ value: sql`coalesce(${categories.count}, 0) + 1` })
-            .from(categories)
-            .where(eq(categories.id, insertPost.categoryId))
-            .limit(1)
-        })
-        .where(eq(categories.id, insertPost.categoryId));
+      try {
+        await db
+          .update(categories)
+          .set({ 
+            count: sql`coalesce(${categories.count}, 0) + 1`
+          })
+          .where(eq(categories.id, categoryId));
+      } catch (err) {
+        console.error("Error updating category count:", err);
+        // Don't fail the whole operation if just the count update fails
+      }
       
       return post;
     } catch (error) {
@@ -686,56 +718,85 @@ export class DatabaseStorage implements IStorage {
   }
 
   async updatePost(id: number, postUpdate: Partial<InsertPost>): Promise<Post | undefined> {
-    const originalPost = await this.getPostById(id);
-    if (!originalPost) return undefined;
-    
-    const [updatedPost] = await db
-      .update(posts)
-      .set({
-        ...postUpdate,
-        updatedAt: new Date()
-      })
-      .where(eq(posts.id, id))
-      .returning();
+    try {
+      console.log("Updating post:", id, JSON.stringify(postUpdate));
+      const originalPost = await this.getPostById(id);
+      if (!originalPost) return undefined;
       
-    // If category changed, update category counts
-    if (postUpdate.categoryId && postUpdate.categoryId !== originalPost.categoryId) {
-      // Decrease count for old category
-      await db
-        .update(categories)
-        .set({ count: db.select({ value: categories.count }).from(categories).where(eq(categories.id, originalPost.categoryId)).then(rows => Math.max((rows[0]?.value || 0) - 1, 0)) })
-        .where(eq(categories.id, originalPost.categoryId));
+      // Create update data without date fields that will be set explicitly
+      const updateData = { ...postUpdate };
+      
+      // Set updated timestamp
+      const [updatedPost] = await db
+        .update(posts)
+        .set(updateData)
+        .where(eq(posts.id, id))
+        .returning();
         
-      // Increase count for new category
-      await db
-        .update(categories)
-        .set({ count: db.select({ value: categories.count }).from(categories).where(eq(categories.id, postUpdate.categoryId)).then(rows => (rows[0]?.value || 0) + 1) })
-        .where(eq(categories.id, postUpdate.categoryId));
+      // If category changed, update category counts
+      if (postUpdate.categoryId && postUpdate.categoryId !== originalPost.categoryId) {
+        try {
+          // Decrease count for old category
+          await db
+            .update(categories)
+            .set({ 
+              count: sql`greatest(coalesce(${categories.count}, 0) - 1, 0)`
+            })
+            .where(eq(categories.id, originalPost.categoryId));
+            
+          // Increase count for new category
+          await db
+            .update(categories)
+            .set({ 
+              count: sql`coalesce(${categories.count}, 0) + 1`
+            })
+            .where(eq(categories.id, postUpdate.categoryId));
+        } catch (err) {
+          console.error("Error updating category counts:", err);
+          // Don't fail the whole operation if just the count update fails
+        }
+      }
+      
+      return updatedPost || undefined;
+    } catch (error) {
+      console.error("Error in updatePost:", error);
+      throw error;
     }
-    
-    return updatedPost || undefined;
   }
 
   async deletePost(id: number): Promise<boolean> {
-    const post = await this.getPostById(id);
-    if (!post) return false;
-    
-    const result = await db.delete(posts).where(eq(posts.id, id)).returning();
-    
-    if (result.length > 0) {
-      // Update category count
-      await db
-        .update(categories)
-        .set({ count: db.select({ value: categories.count }).from(categories).where(eq(categories.id, post.categoryId)).then(rows => Math.max((rows[0]?.value || 0) - 1, 0)) })
-        .where(eq(categories.id, post.categoryId));
-        
-      // Delete associated comments
-      await db.delete(comments).where(eq(comments.postId, id));
+    try {
+      console.log("Deleting post:", id);
+      const post = await this.getPostById(id);
+      if (!post) return false;
       
-      return true;
+      const result = await db.delete(posts).where(eq(posts.id, id)).returning();
+      
+      if (result.length > 0) {
+        try {
+          // Update category count
+          await db
+            .update(categories)
+            .set({ 
+              count: sql`greatest(coalesce(${categories.count}, 0) - 1, 0)`
+            })
+            .where(eq(categories.id, post.categoryId));
+            
+          // Delete associated comments
+          await db.delete(comments).where(eq(comments.postId, id));
+        } catch (err) {
+          console.error("Error cleaning up after post deletion:", err);
+          // Continue with deletion even if cleanup fails
+        }
+        
+        return true;
+      }
+      
+      return false;
+    } catch (error) {
+      console.error("Error deleting post:", error);
+      throw error;
     }
-    
-    return false;
   }
   
   // Comment operations
@@ -748,14 +809,30 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createComment(insertComment: InsertComment): Promise<Comment> {
-    const [comment] = await db
-      .insert(comments)
-      .values({
-        ...insertComment,
-        createdAt: new Date()
-      })
-      .returning();
-    return comment;
+    try {
+      console.log("Creating comment:", JSON.stringify(insertComment));
+      
+      // Extract only the fields we need
+      const { content, userId, postId } = insertComment;
+      
+      const [comment] = await db
+        .insert(comments)
+        .values({
+          content,
+          userId,
+          postId
+        })
+        .returning();
+        
+      if (!comment) {
+        throw new Error("Failed to create comment");
+      }
+      
+      return comment;
+    } catch (error) {
+      console.error("Error creating comment:", error);
+      throw error;
+    }
   }
 
   async deleteComment(id: number): Promise<boolean> {
