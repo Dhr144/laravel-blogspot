@@ -57,7 +57,10 @@ const Dashboard = () => {
   const handleDeletePost = async (postId: number) => {
     setDeletingPostId(postId);
     try {
-      await apiRequest('DELETE', `/api/posts/${postId}`);
+      const response = await apiRequest('DELETE', `/api/posts/${postId}`);
+      
+      // If the response is 404, it means the post doesn't exist anymore
+      // We still want to refresh the UI to remove it from the list
       
       // Invalidate posts query to refresh the list
       queryClient.invalidateQueries({ queryKey: ['/api/posts'] });
@@ -67,13 +70,26 @@ const Dashboard = () => {
         title: "Post deleted",
         description: "The post has been successfully deleted.",
       });
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error deleting post:", error);
-      toast({
-        title: "Error",
-        description: "Failed to delete the post. Please try again.",
-        variant: "destructive",
-      });
+      
+      // If the error is a 404, that means the post is already deleted
+      // We should still refresh the UI in this case
+      if (error.status === 404) {
+        queryClient.invalidateQueries({ queryKey: ['/api/posts'] });
+        queryClient.invalidateQueries({ queryKey: ['/api/categories'] });
+        
+        toast({
+          title: "Post already deleted",
+          description: "The post was already removed from the system.",
+        });
+      } else {
+        toast({
+          title: "Error",
+          description: "Failed to delete the post. Please try again.",
+          variant: "destructive",
+        });
+      }
     } finally {
       setDeletingPostId(null);
     }
