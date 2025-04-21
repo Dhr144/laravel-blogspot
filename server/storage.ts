@@ -5,6 +5,8 @@ import {
   type Post, type InsertPost,
   type Comment, type InsertComment
 } from "@shared/schema";
+import { db } from "./db";
+import { eq, and, asc, desc } from "drizzle-orm";
 
 export interface IStorage {
   // User operations
@@ -552,4 +554,193 @@ $users = Cache::remember('users', 3600, function () {
   }
 }
 
-export const storage = new MemStorage();
+
+
+// Database storage implementation
+export class DatabaseStorage implements IStorage {
+  async getUser(id: number): Promise<User | undefined> {
+    const [user] = await db.select().from(users).where(eq(users.id, id));
+    return user || undefined;
+  }
+
+  async getUserByUsername(username: string): Promise<User | undefined> {
+    const [user] = await db.select().from(users).where(eq(users.username, username));
+    return user || undefined;
+  }
+
+  async createUser(insertUser: InsertUser): Promise<User> {
+    const [user] = await db
+      .insert(users)
+      .values(insertUser)
+      .returning();
+    return user;
+  }
+  
+  // Category operations
+  async getAllCategories(): Promise<Category[]> {
+    return await db.select().from(categories).orderBy(asc(categories.name));
+  }
+
+  async getCategoryById(id: number): Promise<Category | undefined> {
+    const [category] = await db.select().from(categories).where(eq(categories.id, id));
+    return category || undefined;
+  }
+
+  async getCategoryBySlug(slug: string): Promise<Category | undefined> {
+    const [category] = await db.select().from(categories).where(eq(categories.slug, slug));
+    return category || undefined;
+  }
+
+  async createCategory(insertCategory: InsertCategory): Promise<Category> {
+    const [category] = await db
+      .insert(categories)
+      .values({ ...insertCategory, count: 0 })
+      .returning();
+    return category;
+  }
+
+  async updateCategory(id: number, categoryUpdate: Partial<InsertCategory>): Promise<Category | undefined> {
+    const [updatedCategory] = await db
+      .update(categories)
+      .set(categoryUpdate)
+      .where(eq(categories.id, id))
+      .returning();
+    return updatedCategory || undefined;
+  }
+
+  async deleteCategory(id: number): Promise<boolean> {
+    const result = await db.delete(categories).where(eq(categories.id, id)).returning();
+    return result.length > 0;
+  }
+  
+  // Post operations
+  async getAllPosts(options?: { published?: boolean }): Promise<Post[]> {
+    let query = db.select().from(posts);
+    
+    if (options?.published !== undefined) {
+      query = query.where(eq(posts.published, options.published));
+    }
+    
+    return await query.orderBy(desc(posts.createdAt));
+  }
+
+  async getPostById(id: number): Promise<Post | undefined> {
+    const [post] = await db.select().from(posts).where(eq(posts.id, id));
+    return post || undefined;
+  }
+
+  async getPostBySlug(slug: string): Promise<Post | undefined> {
+    const [post] = await db.select().from(posts).where(eq(posts.slug, slug));
+    return post || undefined;
+  }
+
+  async getPostsByCategory(categoryId: number, options?: { published?: boolean }): Promise<Post[]> {
+    let query = db.select().from(posts).where(eq(posts.categoryId, categoryId));
+    
+    if (options?.published !== undefined) {
+      query = query.where(eq(posts.published, options.published));
+    }
+    
+    return await query.orderBy(desc(posts.createdAt));
+  }
+
+  async createPost(insertPost: InsertPost): Promise<Post> {
+    const now = new Date();
+    const [post] = await db
+      .insert(posts)
+      .values({
+        ...insertPost,
+        createdAt: now,
+        updatedAt: now
+      })
+      .returning();
+      
+    // Update category count
+    await db
+      .update(categories)
+      .set({ count: db.select({ value: categories.count }).from(categories).where(eq(categories.id, insertPost.categoryId)).then(rows => (rows[0]?.value || 0) + 1) })
+      .where(eq(categories.id, insertPost.categoryId));
+      
+    return post;
+  }
+
+  async updatePost(id: number, postUpdate: Partial<InsertPost>): Promise<Post | undefined> {
+    const originalPost = await this.getPostById(id);
+    if (!originalPost) return undefined;
+    
+    const [updatedPost] = await db
+      .update(posts)
+      .set({
+        ...postUpdate,
+        updatedAt: new Date()
+      })
+      .where(eq(posts.id, id))
+      .returning();
+      
+    // If category changed, update category counts
+    if (postUpdate.categoryId && postUpdate.categoryId !== originalPost.categoryId) {
+      // Decrease count for old category
+      await db
+        .update(categories)
+        .set({ count: db.select({ value: categories.count }).from(categories).where(eq(categories.id, originalPost.categoryId)).then(rows => Math.max((rows[0]?.value || 0) - 1, 0)) })
+        .where(eq(categories.id, originalPost.categoryId));
+        
+      // Increase count for new category
+      await db
+        .update(categories)
+        .set({ count: db.select({ value: categories.count }).from(categories).where(eq(categories.id, postUpdate.categoryId)).then(rows => (rows[0]?.value || 0) + 1) })
+        .where(eq(categories.id, postUpdate.categoryId));
+    }
+    
+    return updatedPost || undefined;
+  }
+
+  async deletePost(id: number): Promise<boolean> {
+    const post = await this.getPostById(id);
+    if (!post) return false;
+    
+    const result = await db.delete(posts).where(eq(posts.id, id)).returning();
+    
+    if (result.length > 0) {
+      // Update category count
+      await db
+        .update(categories)
+        .set({ count: db.select({ value: categories.count }).from(categories).where(eq(categories.id, post.categoryId)).then(rows => Math.max((rows[0]?.value || 0) - 1, 0)) })
+        .where(eq(categories.id, post.categoryId));
+        
+      // Delete associated comments
+      await db.delete(comments).where(eq(comments.postId, id));
+      
+      return true;
+    }
+    
+    return false;
+  }
+  
+  // Comment operations
+  async getCommentsByPost(postId: number): Promise<Comment[]> {
+    return await db
+      .select()
+      .from(comments)
+      .where(eq(comments.postId, postId))
+      .orderBy(desc(comments.createdAt));
+  }
+
+  async createComment(insertComment: InsertComment): Promise<Comment> {
+    const [comment] = await db
+      .insert(comments)
+      .values({
+        ...insertComment,
+        createdAt: new Date()
+      })
+      .returning();
+    return comment;
+  }
+
+  async deleteComment(id: number): Promise<boolean> {
+    const result = await db.delete(comments).where(eq(comments.id, id)).returning();
+    return result.length > 0;
+  }
+}
+
+export const storage = new DatabaseStorage();
