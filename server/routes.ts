@@ -10,15 +10,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   const apiRouter = '/api';
   
   // Setup authentication with Passport and sessions
-  setupAuth(app);
-  
-  // Authentication middleware for protected routes
-  const isAuthenticated = (req: Request, res: Response, next: NextFunction) => {
-    if (req.isAuthenticated()) {
-      return next();
-    }
-    res.status(401).json({ message: "Unauthorized - Please login first" });
-  };
+  const { isAuthenticated } = setupAuth(app);
 
   // Category routes
   app.get(`${apiRouter}/categories`, async (_req: Request, res: Response) => {
@@ -52,7 +44,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post(`${apiRouter}/categories`, async (req: Request, res: Response) => {
+  app.post(`${apiRouter}/categories`, isAuthenticated, async (req: Request, res: Response) => {
     try {
       const categoryInput = insertCategorySchema.safeParse(req.body);
       
@@ -71,7 +63,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.put(`${apiRouter}/categories/:id`, async (req: Request, res: Response) => {
+  app.put(`${apiRouter}/categories/:id`, isAuthenticated, async (req: Request, res: Response) => {
     try {
       const id = parseInt(req.params.id);
       
@@ -102,7 +94,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.delete(`${apiRouter}/categories/:id`, async (req: Request, res: Response) => {
+  app.delete(`${apiRouter}/categories/:id`, isAuthenticated, async (req: Request, res: Response) => {
     try {
       const id = parseInt(req.params.id);
       
@@ -200,7 +192,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post(`${apiRouter}/posts`, async (req: Request, res: Response) => {
+  app.post(`${apiRouter}/posts`, isAuthenticated, async (req: Request, res: Response) => {
     try {
       console.log("Received post request body:", JSON.stringify(req.body));
       
@@ -237,7 +229,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.put(`${apiRouter}/posts/:id`, async (req: Request, res: Response) => {
+  app.put(`${apiRouter}/posts/:id`, isAuthenticated, async (req: Request, res: Response) => {
     try {
       const id = parseInt(req.params.id);
       
@@ -276,7 +268,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.delete(`${apiRouter}/posts/:id`, async (req: Request, res: Response) => {
+  app.delete(`${apiRouter}/posts/:id`, isAuthenticated, async (req: Request, res: Response) => {
     try {
       const id = parseInt(req.params.id);
       
@@ -314,7 +306,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post(`${apiRouter}/comments`, async (req: Request, res: Response) => {
+  app.post(`${apiRouter}/comments`, isAuthenticated, async (req: Request, res: Response) => {
     try {
       const commentInput = insertCommentSchema.safeParse(req.body);
       
