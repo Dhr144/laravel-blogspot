@@ -8,30 +8,30 @@ export function ProtectedRoute({
   component: Component,
 }: {
   path: string;
-  component: React.ComponentType;
+  component: React.ComponentType<any>;
 }) {
   const { user, isLoading } = useAuth();
 
-  // Show loading spinner while checking authentication
-  if (isLoading) {
-    return (
-      <Route path={path}>
-        <div className="flex items-center justify-center min-h-screen">
-          <Loader2 className="h-8 w-8 animate-spin text-primary" />
-        </div>
-      </Route>
-    );
-  }
+  return (
+    <Route path={path}>
+      {() => {
+        // Show loading spinner while checking authentication
+        if (isLoading) {
+          return (
+            <div className="flex items-center justify-center min-h-screen">
+              <Loader2 className="h-8 w-8 animate-spin text-primary" />
+            </div>
+          );
+        }
 
-  // Redirect to login if not authenticated
-  if (!user) {
-    return (
-      <Route path={path}>
-        <Redirect to="/auth" />
-      </Route>
-    );
-  }
+        // Redirect to login if not authenticated
+        if (!user) {
+          return <Redirect to="/auth" />;
+        }
 
-  // Render the protected component if authenticated
-  return <Route path={path} component={Component} />;
+        // Render the protected component if authenticated
+        return <Component />;
+      }}
+    </Route>
+  );
 }
