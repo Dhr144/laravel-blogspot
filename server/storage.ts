@@ -6,7 +6,7 @@ import {
   type Comment, type InsertComment
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, and, asc, desc } from "drizzle-orm";
+import { eq, and, asc, desc, sql } from "drizzle-orm";
 
 export interface IStorage {
   // User operations
@@ -645,23 +645,44 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createPost(insertPost: InsertPost): Promise<Post> {
-    const now = new Date();
-    const [post] = await db
-      .insert(posts)
-      .values({
-        ...insertPost,
-        createdAt: now,
-        updatedAt: now
-      })
-      .returning();
+    try {
+      console.log("Creating post with data:", JSON.stringify(insertPost));
+      const now = new Date();
       
-    // Update category count
-    await db
-      .update(categories)
-      .set({ count: db.select({ value: categories.count }).from(categories).where(eq(categories.id, insertPost.categoryId)).then(rows => (rows[0]?.value || 0) + 1) })
-      .where(eq(categories.id, insertPost.categoryId));
+      // Convert any nullish values to null for database compatibility
+      const sanitizedData = Object.fromEntries(
+        Object.entries(insertPost).map(([key, value]) => [key, value === undefined ? null : value])
+      );
       
-    return post;
+      const [post] = await db
+        .insert(posts)
+        .values({
+          ...sanitizedData,
+          createdAt: now,
+          updatedAt: now
+        })
+        .returning();
+      
+      if (!post) {
+        throw new Error("Failed to create post, no post returned");
+      }
+      
+      // Update category count
+      await db
+        .update(categories)
+        .set({ 
+          count: db.select({ value: sql`coalesce(${categories.count}, 0) + 1` })
+            .from(categories)
+            .where(eq(categories.id, insertPost.categoryId))
+            .limit(1)
+        })
+        .where(eq(categories.id, insertPost.categoryId));
+      
+      return post;
+    } catch (error) {
+      console.error("Error in createPost:", error);
+      throw error;
+    }
   }
 
   async updatePost(id: number, postUpdate: Partial<InsertPost>): Promise<Post | undefined> {

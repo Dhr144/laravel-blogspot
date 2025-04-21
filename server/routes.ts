@@ -244,9 +244,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post(`${apiRouter}/posts`, async (req: Request, res: Response) => {
     try {
+      console.log("Received post request body:", JSON.stringify(req.body));
+      
+      // Parse the post data
       const postInput = insertPostSchema.safeParse(req.body);
       
       if (!postInput.success) {
+        console.error("Post validation failed:", postInput.error.format());
         return res.status(400).json({ 
           message: "Invalid post data",
           errors: postInput.error.format() 
@@ -265,7 +269,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "User not found" });
       }
       
+      // Create the post
       const post = await storage.createPost(postInput.data);
+      console.log("Post created successfully:", post);
       return res.status(201).json(post);
     } catch (error) {
       console.error("Create post error:", error);
