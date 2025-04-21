@@ -337,7 +337,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.delete(`${apiRouter}/comments/:id`, async (req: Request, res: Response) => {
+  app.delete(`${apiRouter}/comments/:id`, isAuthenticated, async (req: Request, res: Response) => {
     try {
       const id = parseInt(req.params.id);
       
