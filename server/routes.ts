@@ -1,66 +1,24 @@
-import type { Express, Request, Response } from "express";
+import type { Express, Request, Response, NextFunction } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { insertPostSchema, insertCategorySchema, insertCommentSchema, insertUserSchema } from "@shared/schema";
 import { z } from "zod";
+import { setupAuth } from "./auth";
 
 export async function registerRoutes(app: Express): Promise<Server> {
   // All API routes
   const apiRouter = '/api';
-
-  // User routes
-  app.post(`${apiRouter}/auth/login`, async (req: Request, res: Response) => {
-    try {
-      const { username, password } = req.body;
-      
-      if (!username || !password) {
-        return res.status(400).json({ message: "Username and password are required" });
-      }
-      
-      const user = await storage.getUserByUsername(username);
-      
-      if (!user || user.password !== password) {
-        return res.status(401).json({ message: "Invalid credentials" });
-      }
-      
-      // Don't send the password back
-      const { password: _, ...userWithoutPassword } = user;
-      
-      return res.status(200).json(userWithoutPassword);
-    } catch (error) {
-      console.error("Login error:", error);
-      return res.status(500).json({ message: "Internal server error" });
+  
+  // Setup authentication with Passport and sessions
+  setupAuth(app);
+  
+  // Authentication middleware for protected routes
+  const isAuthenticated = (req: Request, res: Response, next: NextFunction) => {
+    if (req.isAuthenticated()) {
+      return next();
     }
-  });
-
-  app.post(`${apiRouter}/auth/register`, async (req: Request, res: Response) => {
-    try {
-      const userInput = insertUserSchema.safeParse(req.body);
-      
-      if (!userInput.success) {
-        return res.status(400).json({ 
-          message: "Invalid user data",
-          errors: userInput.error.format() 
-        });
-      }
-      
-      // Check if username already exists
-      const existingUser = await storage.getUserByUsername(userInput.data.username);
-      if (existingUser) {
-        return res.status(400).json({ message: "Username already exists" });
-      }
-      
-      const user = await storage.createUser(userInput.data);
-      
-      // Don't send the password back
-      const { password, ...userWithoutPassword } = user;
-      
-      return res.status(201).json(userWithoutPassword);
-    } catch (error) {
-      console.error("Registration error:", error);
-      return res.status(500).json({ message: "Internal server error" });
-    }
-  });
+    res.status(401).json({ message: "Unauthorized - Please login first" });
+  };
 
   // Category routes
   app.get(`${apiRouter}/categories`, async (_req: Request, res: Response) => {
